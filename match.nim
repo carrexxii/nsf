@@ -1,9 +1,11 @@
 {.experimental: "codeReordering".}
 
+import std/strutils
+
 type State = object
     pat: ptr char
     str: ptr char
-    res: string = ""
+    res: string
 
 template `+`(p: ptr char; offset: int): ptr char = cast[ptr char](cast[uint](p) + offset*(sizeof p[]))
 template `-`(p: ptr char; offset: int): ptr char = cast[ptr char](cast[uint](p) - offset*(sizeof p[]))
@@ -14,33 +16,47 @@ proc dec(p: var ptr char): char {.discardable.} = result = p[]; p -= 1
 
 func match_class(c: char; k: ptr char): bool =
     case k[]
-    of '.': result = true
-    else:
-        result = c == k[]
+    of '.': true
+    of 'a': is_alpha_ascii c
+    else  : c == k[]
 
-proc match_one(state: var State): char =
-    let p = inc state.pat
-    let s = inc state.str
-    case p
-    of '.':
-        result = s
-    else:
-        assert(false, $p)
+proc step(pat: var ptr char) =
+    case pat[]
+    of '\\': pat += 2
+    else: inc pat
+
+proc match_one(state: var State): bool =
+    case state.pat[]
+    of '.' : true
+    of '\\': match_class(state.str[], state.pat + 1)
+    else   : state.str[] == state.pat[]
 
 proc match_many_max(state: var State): string =
     let k = inc state.pat
     assert((inc state.pat) == '*', $state.pat[])
-    while true:
-        let c = inc state.str
-        if not match_class(c, k.addr):
-            dec state.str
-            return
-        elif c == '\0':
-            return
-        else:
-            result &= c
 
-proc match*(state: var State) =
+    var
+        str = state.str
+        pat = state.pat
+        len = 0
+        prev_match = 0
+    step pat
+    while true:
+        let c = inc str
+        if not match_class(c, k.addr):
+            if not match_class(c, pat):
+                len = prev_match
+                break
+            prev_match = len
+        elif c == '\0':
+            break
+        else:
+            inc len
+
+    for i in 0 ..< len:
+        result &= inc state.str
+
+proc match(state: var State) =
     while true:
         case state.pat[]
         of '\0':
@@ -50,12 +66,16 @@ proc match*(state: var State) =
             of '*':
                 state.res &= state.match_many_max
             else:
-                state.res &= state.match_one
+                if state.match_one:
+                    state.res &= inc state.str
+                    step state.pat
+                else:
+                    break
 
-proc match(str, pat: string): string =
+proc match*(str, pat: string): string =
     var state = State(pat: pat[0].addr, str: str[0].addr)
     match state
     state.res
 
-when is_main_module:
-    echo "Hello, World!".match ".*"
+proc `%`*(str, pat: string): string =
+    match(str, pat)
