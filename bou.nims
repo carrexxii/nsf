@@ -1,30 +1,40 @@
-import std/[os, sugar, streams, strformat, strutils, sequtils, tables]
-
---hints:off
+import std/[os, strformat, strutils]
 
 let
     cwd = get_current_dir()
-    bin_path  = get_current_dir().split('/')[^1] #dir_name
+    bin_path  = cwd.split('/')[^1]
     src_dir   = "src"
     lib_dir   = "lib"
     tools_dir = "tools"
+    build_dir = "build"
     deps: seq[tuple[src, dst, tag: string; cmds: seq[string]]] = @[
         (src : "https://github.com/libsdl-org/SDL/",
-         dst : cwd / lib_dir / "sdl",
-         tag : "2fb057af65b0951d063eafd3e052b06e8b4b365e",
-         cmds: @[ "cmake -S . -B . -DSDL_DISABLE_INSTALL=ON -DSDL_STATIC=OFF",
-                  "cmake --build . -j8",
-                 &"cp ./build/libSDL3_ttf.so* {cwd / lib_dir}"])
+         dst : lib_dir / "sdl",
+         tag : "3c5b1b52ac2aa34e902f01040e8d4a2691c234e7",
+         cmds: @[""])
     ]
+
+    entry =
+        if file_exists &"{src_dir}/main.nim":
+            src_dir / "main.nim"
+        else:
+            src_dir / &"{cwd.split('/')[^1]}.nim"
+    debug_flags   = "--hints:off --nimCache:{build_dir} -o:{bin_path} --cc:tcc " &
+                    "--passL:\"-ldl -lm\" --tlsEmulation:on -d:useMalloc"
+    release_flags = "--nimCache:{build_dir} -o:{bin_path} --cc:gcc " &
+                    "-d:release -d:danger"
+    post_release = @[""]
 
 #[ -------------------------------------------------------------------- ]#
 
-proc red*    (s: string): string = "\e[31m" & s & "\e[0m"
-proc green*  (s: string): string = "\e[32m" & s & "\e[0m"
-proc yellow* (s: string): string = "\e[33m" & s & "\e[0m"
-proc blue*   (s: string): string = "\e[34m" & s & "\e[0m"
-proc magenta*(s: string): string = "\e[35m" & s & "\e[0m"
-proc cyan*   (s: string): string = "\e[36m" & s & "\e[0m"
+--hints:off
+
+proc red    (s: string): string = "\e[31m" & s & "\e[0m"
+proc green  (s: string): string = "\e[32m" & s & "\e[0m"
+proc yellow (s: string): string = "\e[33m" & s & "\e[0m"
+proc blue   (s: string): string = "\e[34m" & s & "\e[0m"
+proc magenta(s: string): string = "\e[35m" & s & "\e[0m"
+proc cyan   (s: string): string = "\e[36m" & s & "\e[0m"
 
 proc error(s: string)   = echo red    ("Error: "   & s)
 proc warning(s: string) = echo yellow ("Warning: " & s)
@@ -37,31 +47,35 @@ proc run(cmd: string) =
     else:
         exec cmd
 
+func is_git_repo(url: string): bool =
+    (gorge_ex &"git ls-remote -q {url}")[1] == 0
+
 #[ -------------------------------------------------------------------- ]#
 
-task add, "Add a dependency to the project [nim add <dependency>]":
-    if param_count() < 2:
-        error "Error: add requires at least one argument"
-
-task restore, "Fetch and build ":
-    if dir_exists ".git":
-        run &"git submodule update --init --remote --merge --recursive -j 8"
-
+task restore, "Fetch and build dependencies":
+    run &"git submodule update --init --remote --merge --recursive -j 8"
     for dep in deps:
-        if (gorge_ex &"git ls-remote -q {dep.src}")[1] == 0:
-            run &"git submodule add {dep.src} {dep.dst}"
-        else:
-            # run &"wget {dep.src} {dep.dst}"
-            echo &"wget {dep.src} {dep.dst}"
+        if is_git_repo dep.src:
+            if not (dir_exists dep.dst):
+                run &"git submodule add {dep.src} {dep.dst}"
+            with_dir dep.dst:
+                run &"git checkout {dep.tag}"
 
-        for cmd in dep.cmds:
-            run cmd
+        with_dir dep.dst:
+            for cmd in dep.cmds:
+                run cmd
 
 task build, "Build the project (debug build)":
-    assert false
+    run &"nim c {debug_flags} {entry}"
 
 task release, "Build the project (release build)":
-    assert false
+    run &"nim c {debug_flags} {entry}"
+    for cmd in post_release:
+        run cmd
+
+task run, "Build and run with debug build":
+    build_task()
+    run &"./{bin_path}"
 
 task test, "Run the project's tests":
     assert false

@@ -2,17 +2,20 @@
 
 import std/strutils
 
-type State = object
-    pat: ptr char
-    str: ptr char
-    res: string
+type
+    PatternError = object of CatchableError
+
+    State = object
+        pat: ptr char
+        str: ptr char
+        res: string
 
 template `+`(p: ptr char; offset: int): ptr char = cast[ptr char](cast[uint](p) + offset*(sizeof p[]))
 template `-`(p: ptr char; offset: int): ptr char = cast[ptr char](cast[uint](p) - offset*(sizeof p[]))
 template `+=`(p: ptr char; offset: int) = p = p + offset
 template `-=`(p: ptr char; offset: int) = p = p - offset
-proc inc(p: var ptr char): char {.discardable.} = result = p[]; p += 1
-proc dec(p: var ptr char): char {.discardable.} = result = p[]; p -= 1
+proc inc(p: var ptr char): char {.inline, discardable.} = result = p[]; p += 1
+proc dec(p: var ptr char): char {.inline, discardable.} = result = p[]; p -= 1
 
 func match_class(c: char; k: ptr char): bool =
     case k[]
@@ -20,10 +23,13 @@ func match_class(c: char; k: ptr char): bool =
     of 'a': is_alpha_ascii c
     else  : c == k[]
 
-proc step(pat: var ptr char) =
+proc step_pattern(pat: var ptr char) =
     case pat[]
     of '\\': pat += 2
-    else: inc pat
+    else: pat += 2
+
+    if pat[] == '*' or pat[] == '*':
+        inc pat
 
 proc match_one(state: var State): bool =
     case state.pat[]
@@ -32,18 +38,17 @@ proc match_one(state: var State): bool =
     else   : state.str[] == state.pat[]
 
 proc match_many_max(state: var State): string =
-    let k = inc state.pat
-    assert((inc state.pat) == '*', $state.pat[])
+    let k = state.pat
+    step_pattern state.pat
 
     var
         str = state.str
         pat = state.pat
         len = 0
         prev_match = 0
-    step pat
     while true:
         let c = inc str
-        if not match_class(c, k.addr):
+        if not match_class(c, k):
             if not match_class(c, pat):
                 len = prev_match
                 break
@@ -65,10 +70,14 @@ proc match(state: var State) =
             case (state.pat + 1)[]
             of '*':
                 state.res &= state.match_many_max
+            of '+':
+                if state.match_one:
+                    state.res &= inc state.str
+                    state.res &= state.match_many_max
             else:
                 if state.match_one:
                     state.res &= inc state.str
-                    step state.pat
+                    step_pattern state.pat
                 else:
                     break
 
